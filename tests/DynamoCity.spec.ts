@@ -1,9 +1,9 @@
-import { test, expect } from "@playwright/test";
-import { getClimaFromDynamo, invokeLambda, saveClimaToDynamo, TablaInfoSchema } from "../Utils/LambdaInvoker";
-import { ClimaBody, ClimaItem } from "../Utils/InterfacesTypes";
+import { test, expect } from "../fixtures/clima.fixture";
+import { ClimaBody, ClimaItem } from "../interfaces/dynamo.interface";
+import { LambdaResponse } from "../interfaces/lambda.interface";
 
 // Test para validar el ingreso de un registro en una tabla de DynamoDB sin necesidad de consultar la Lambda - Sin SQS y con interface
-test('Verificar escritura directa en DynamoDB', async ( ) => {
+test('Verificar escritura directa en DynamoDB', async ( { dynamoService } ) => {
     
     const body: ClimaBody = {
         ciudad: "Namek",
@@ -11,11 +11,11 @@ test('Verificar escritura directa en DynamoDB', async ( ) => {
         estado_del_cielo: "Despejado"
     }
 
-    await saveClimaToDynamo(body);
+    await dynamoService.saveClima(body);
 
     console.log(`✅ Escritura directa correcta para ${body.ciudad}`);
 
-    const item: ClimaItem | undefined =  await getClimaFromDynamo(body.ciudad);
+    const item: ClimaItem | undefined =  await dynamoService.getClima(body.ciudad);
 
     expect(item).toBeDefined();
     expect(item!.Ciudad).toBe(body.ciudad);
@@ -27,7 +27,7 @@ test('Verificar escritura directa en DynamoDB', async ( ) => {
 })
 
 // Este test no es necesario ya que el Helper "GetClimaFromDynamo" ya incluye el campo que valida la consistencia implicitamente - Sin SQS y con interface
-test('Verificar lectura consistente en DynamoDB', async ( ) => {
+test('Verificar lectura consistente en DynamoDB', async ( { dynamoService } ) => {
     
     const body: ClimaBody = {
         ciudad: "Namek",
@@ -35,11 +35,11 @@ test('Verificar lectura consistente en DynamoDB', async ( ) => {
         estado_del_cielo: "Despejado"
     }
 
-    await saveClimaToDynamo(body);
+    await dynamoService.saveClima(body);
 
     console.log(`✅ Escritura directa correcta para ${body.ciudad}`);
 
-    const item: ClimaItem | undefined =  await getClimaFromDynamo(body.ciudad);
+    const item: ClimaItem | undefined =  await dynamoService.getClima(body.ciudad);
 
     expect(item).toBeDefined();
     expect(item!.Ciudad).toBe(body.ciudad);
@@ -52,12 +52,11 @@ test('Verificar lectura consistente en DynamoDB', async ( ) => {
 })
 
 // Test para verificar las configuraciones y propiedades de una tabla en Dynamo - Sin SQS
-test('Verificar configuración de la tabla DynamoDB', async ( ) => {
+test('Verificar configuración de la tabla DynamoDB', async ( { dynamoService } ) => {
     
-    const NombreTabla = 'city';
+    const NombreTabla: string = process.env.TABLE_NAME || "city";
     const NombreCampo = 'Ciudad';
-
-    const tableInfo = await TablaInfoSchema(NombreTabla);
+    const tableInfo = await dynamoService.getTableInfo(NombreTabla);
 
     console.log(`📊 Configuración de la tabla: `, JSON.stringify(tableInfo));
 
@@ -70,24 +69,24 @@ test('Verificar configuración de la tabla DynamoDB', async ( ) => {
 })
 
 // Test para realizar la concurrencia de 10 registros paralelos en una tabla en Dynamo - Sin SQS
-test('Simulación de concurrencia: 10 escrituras DynamoDB', async ( ) => {
+test('Simulación de concurrencia: 10 escrituras DynamoDB', async ( { lambdaService, dynamoService } ) => {
     
-    const ciudades = ['Chicago', 'Knoxville', 'Texas', 'Sinaloa', 'San Diego', 'San Jose', 'Nueva York', 'Toronto', 'Oaxaca City', 'Chihuahua'];
+    const ciudades: string[] = ['Chicago', 'Knoxville', 'Texas', 'Sinaloa', 'San Diego', 'San Jose', 'Nueva York', 'Toronto', 'Oaxaca City', 'Chihuahua'];
 
-    const items = await Promise.all(
-        ciudades.map(async (ciudad) => {
-            const respuesta = await invokeLambda("Clima", { city: ciudad });
+    const items: (ClimaItem | undefined)[] = await Promise.all(
+        ciudades.map(async (ciudad: string) => {
+            const respuesta: LambdaResponse = await lambdaService.invoke("Clima", { city: ciudad });
             expect(respuesta.errorMessage).toBeUndefined();
 
             const body = JSON.parse(respuesta.body);
-            await saveClimaToDynamo(body);
+            await dynamoService.saveClima(body);
 
-            const item = await getClimaFromDynamo(body.ciudad);
+            const item = await dynamoService.getClima(body.ciudad);
             return item;
         })
     );
 
-    items.forEach((item, indice) => {
+    items.forEach((item: ClimaItem | undefined, indice: number) => {
         expect.soft(item).toBeDefined();
         expect.soft(item?.Ciudad).toBe(ciudades[indice]);
         expect.soft(item?.Temperatura).toBeGreaterThan(0);
